@@ -1,0 +1,93 @@
+variables:
+  VERSION: 1.0.${CI_PIPELINE_ID}
+  MAVEN_REPO_PATH: ${CI_PROJECT_DIR}/.m2/repository
+  JAVA_OPTS: -XX:MaxRAMPercentage=90 # 
+  DEV_USER: student
+  DEV_HOST: std-019-32.praktikum-services.tech
+
+include:
+  - project: 'templates/ci'
+    file: 'DockerInDockerTemplate.yml'
+  #- template: 'Security/SAST.gitlab-ci.yml'
+
+stages:
+   - build
+   #- test
+   - release
+   - deploy
+
+build:
+  stage: build
+  variables:
+    DOCKER_TLS_VERIFY: 0
+  image: docker:20.10.12-dind-rootless
+  before_script:
+    - until docker info; do sleep 10; done
+    # переменные CI_REGISTRY_USER, CI_REGISTRY_PASSWORD, CI_REGISTRY генерятся Гитлабом, их задавать не надо
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - cd backend
+    - >
+      docker build
+      --build-arg VERSION=$VERSION
+      --build-arg SPRING_CLOUD_VAULT_ENABLED="false"
+      --tag $CI_REGISTRY_IMAGE/sausage-backend:$CI_COMMIT_SHA
+      .
+    - docker push $CI_REGISTRY_IMAGE/sausage-backend:$CI_COMMIT_SHA
+
+#spotbugs-sast:
+#  variables:
+#    COMPILE: "true"
+#    SAST_JAVA_VERSION: 16
+#    MAVEN_REPO_PATH: ${CI_PROJECT_DIR}/.m2/repository
+
+#sonarqube-sast:
+#  stage: test
+#  image: maven:3.8-openjdk-16 # тот самый docker-образ, о котором мы все узнаем в будущем
+#  script:
+#    - cd backend
+#    - >
+#      mvn verify sonar:sonar -Dsonar.qualitygate.wait=true
+#      -Dsonar.projectKey=${SONAR_PROJECT_KEY}
+#      -Dsonar.host.url=${SONARQUBE_URL}
+#      -Dsonar.login=${SONAR_LOGIN} 
+#      -Dsonar.projectName=19_ALEXANDERVOZNYY_BACKEND
+
+
+upload-latest:
+  variables:
+    GIT_STRATEGY: none
+  image: docker:20.10.12-dind-rootless
+  stage: release
+  before_script:
+    - until docker info; do sleep 1; done
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker pull $CI_REGISTRY_IMAGE/sausage-backend:$CI_COMMIT_SHA
+    # если образ прошел проверки в CI (сканирование, тесты и т.д), то тегаем latest
+    - docker tag $CI_REGISTRY_IMAGE/sausage-backend:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE/sausage-backend:latest
+    - docker push $CI_REGISTRY_IMAGE/sausage-backend:latest
+
+
+deploy:
+  stage: deploy
+  image: vault:1.11.3
+  before_script:
+    - apk add openssh-client bash
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - scp ./docker-compose.yml ${DEV_USER}@${DEV_HOST}:/home/${DEV_USER}/docker-compose.yml
+    - ssh ${DEV_USER}@${DEV_HOST}
+      "export "SPRING_DATASOURCE_URL=${PSQL_DATASOURCE}";
+       export "SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}";
+       export "SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}";
+       export "SPRING_DATA_MONGODB_URI=${SPRING_DATA_MONGODB_URI}";
+       export "CI_REGISTRY_USER=${CI_REGISTRY_USER}";
+       export "CI_JOB_TOKEN=${CI_JOB_TOKEN}";
+       export "CI_REGISTRY=${CI_REGISTRY}";
+      /bin/bash -s " < ./backend/deploy.sh 

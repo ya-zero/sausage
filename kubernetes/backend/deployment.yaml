@@ -1,0 +1,74 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 3
+  # Стратегия развёртывания. Recreate — удалит сначала все старые Pod'ы 
+  # Есть и более гибкая стратегии, например, RollingUpdate, которая будет обновлять Pod'ы порциями  
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: gitlab.praktikum-services.ru:5050/std-019-032/sausage-store/sausage-backend:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: VAULT_HOST
+              value: std-019-32.praktikum-services.tech
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault
+                  key: vault_token
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                 secretKeyRef:
+                   name: backend
+                   key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                 secretKeyRef:
+                   name: backend
+                   key: SPRING_DATASOURCE_PASSWORD
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                 secretKeyRef:
+                   name: backend
+                   key: SPRING_DATASOURCE_URL
+            - name: SPRING_DATA_MONGODB_URI
+              valueFrom:
+                 secretKeyRef:
+                   name: backend
+                   key: SPRING_DATA_MONGODB_URI
+            - name: SPRING_FLYWAY_BASELINE-ON-MIGRATE
+              value: "true"
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+            - name: REPORT_PATH
+              value: "./"
+            - name: LOG_PATH
+              value: "./"
+          ports:
+            - name: backend
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 1
+            failureThreshold: 6
+      imagePullSecrets:
+        - name: docker-config-secret

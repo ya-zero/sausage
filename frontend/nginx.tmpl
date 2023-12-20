@@ -1,0 +1,28 @@
+{{ range $host, $containers := groupBy $ "Env.VIRTUAL_HOST" }}
+upstream {{ $host }} {
+
+{{ range $index, $value := $containers }}
+    {{ with $address := index $value.Addresses 0 }}
+    server {{ $value.Hostname }}:{{ $address.Port }};
+    {{ end }}
+{{ end }}
+
+}
+
+proxy_cache_path /usr/share/nginx/cache keys_zone=sausage-frontend:10m;
+server {
+  proxy_cache sausage-frontend;
+  listen 80;
+
+  location / {
+    root   /usr/share/nginx/html;
+    index  index.html;
+    try_files $uri $uri/ /index.html;
+    proxy_cache_bypass $cookie_nocache $arg_nocache$arg_comment;
+  }
+
+  location /api {
+      proxy_pass http://{{ $host }};
+  }
+}
+{{ end }} 

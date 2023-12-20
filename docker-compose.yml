@@ -1,0 +1,78 @@
+version: "3.3"
+
+services:
+  backend-blue: &backend-blue
+    #deploy:
+    #  replicas: 2
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    image: gitlab.praktikum-services.ru:5050/std-019-032/sausage-store/sausage-backend:${VERSION:-latest}
+    environment:
+      # Переменные из application.properties можно заменить переменными окружения
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_FLYWAY_BASELINE-ON-MIGRATE: "true"
+      SPRING_FLYWAY_ENABLED: false
+      SPRING_DATA_MONGODB_URI: ${SPRING_DATA_MONGODB_URI}
+      REPORT_PATH: ./
+      LOG_PATH: ./
+      VIRTUAL_HOST: backend-blue
+    healthcheck:
+      #test: curl --fail -s http://localhost:8080/actuator/health
+      test: wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health  || exit 1
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 6 
+    networks:
+      - sausage-store
+    restart: always
+
+
+  backend-green:
+     <<: *backend-blue
+     environment:
+      # Переменные из application.properties можно заменить переменными окружения
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_FLYWAY_BASELINE-ON-MIGRATE: "true"
+      SPRING_FLYWAY_ENABLED: false
+      SPRING_DATA_MONGODB_URI: ${SPRING_DATA_MONGODB_URI}
+      REPORT_PATH: ./
+      LOG_PATH: ./
+      VIRTUAL_HOST: backend-green
+
+
+  backend-report:
+    build: ./backend-report
+    image: gitlab.praktikum-services.ru:5050/std-019-032/sausage-store/sausage-backend-report:${VERSION:-latest}
+    container_name: sausage-store-backend-report
+    environment:
+      DB: ${SPRING_DATA_MONGODB_URI}?tls=true&tlsCAFile=/app/YandexInternalRootCA.crt
+      PORT: ${PORT:-8080}
+    ports:
+      - "8080:8080"
+    networks:
+      - sausage-store
+    restart: always
+
+  frontend:
+    image: gitlab.praktikum-services.ru:5050/std-019-032/sausage-store/sausage-frontend:${VERSION:-latest}
+    container_name: sausage-store-frontend
+    environment:
+      DEFAULT_HOST: backend-green
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./frontend/nginx.tmpl:/app/nginx.tmpl
+      - /var/log/nginx:/var/log/nginx
+    networks:
+      - sausage-store
+    restart: always
+
+networks:
+  sausage-store:

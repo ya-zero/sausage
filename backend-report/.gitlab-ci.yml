@@ -1,0 +1,73 @@
+variables:
+   VERSION: latest
+   DEV_USER: student
+   DEV_HOST: std-019-32.praktikum-services.tech
+   SAST_EXCLUDED_ANALYZERS: "spotbugs,nodejs-scan-sast"  # only for s Gradle, Maven, and SBT
+
+include:  
+  - project: 'templates/ci'
+    file: 'DockerInDockerTemplate.yml'
+  #- template: 'Jobs/SAST.gitlab-ci.yml' 
+
+stages:
+   - build
+   #- test
+   - release
+   - deploy
+
+build-backend-report:
+  stage: build
+  image: docker:20.10.12-dind-rootless
+  before_script:
+    - until docker info; do sleep 10; done
+    # переменные CI_REGISTRY_USER, CI_REGISTRY_PASSWORD, CI_REGISTRY генерятся Гитлабом, их задавать не надо
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - cd backend-report
+    - >
+      docker build
+      --tag $CI_REGISTRY_IMAGE/sausage-backend-report:$CI_COMMIT_SHA
+      .
+    - docker push $CI_REGISTRY_IMAGE/sausage-backend-report:$CI_COMMIT_SHA
+
+
+release:
+  variables:
+    GIT_STRATEGY: none
+  image: docker:20.10.12-dind-rootless
+  stage: release
+  before_script:
+    - until docker info; do sleep 1; done
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker pull $CI_REGISTRY_IMAGE/sausage-backend-report:$CI_COMMIT_SHA
+    # если образ прошел проверки в CI (сканирование, тесты и т.д), то тегаем latest
+    - docker tag $CI_REGISTRY_IMAGE/sausage-backend-report:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE/sausage-backend-report:latest
+    - docker push $CI_REGISTRY_IMAGE/sausage-backend-report:latest
+
+
+deploy-backend-report:
+  stage: deploy
+  image: vault:1.11.3
+  #when: manual
+  before_script:
+    - apk add openssh-client bash
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - scp ./docker-compose.yml ${DEV_USER}@${DEV_HOST}:/home/${DEV_USER}/docker-compose.yml
+    - ssh ${DEV_USER}@${DEV_HOST}
+      "export "CI_REGISTRY_USER=${CI_REGISTRY_USER}";
+       export "CI_JOB_TOKEN=${CI_JOB_TOKEN}";
+       export "CI_REGISTRY=${CI_REGISTRY}";
+       export "SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}";
+       export "SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}";
+       export "SPRING_DATA_MONGODB_URI=${SPRING_DATA_MONGODB_URI}";
+       export "VERSION=${VERSION}";
+       /bin/bash -s " < ./backend-report/deploy.sh 
+  needs:
+    - job: release      

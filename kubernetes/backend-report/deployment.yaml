@@ -1,0 +1,38 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-report
+  labels:
+    app: backend-report
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backend-report
+  template:
+    metadata:
+      labels:
+        app: backend-report
+    spec:
+      containers:
+        - name: backend-report
+          image: gitlab.praktikum-services.ru:5050/std-019-032/sausage-store/sausage-backend-report:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SPRING_DATA_MONGODB_URI_
+              valueFrom:
+                 secretKeyRef:
+                   name: backend
+                   key: SPRING_DATA_MONGODB_URI
+            - name: SPRING_DATA_MONGODB_URI
+              value: "$(SPRING_DATA_MONGODB_URI_)?tls=true&tlsCAFile=/app/YandexInternalRootCA.crt"
+            - name: PORT
+              value: "8080"
+          ports:
+            - name: backend-report
+              containerPort: 8080
+      imagePullSecrets:
+        - name: docker-config-secret
